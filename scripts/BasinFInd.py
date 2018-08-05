@@ -30,6 +30,7 @@ from qgis.core import (QgsField,
                        QgsVectorFileWriter,
                        QgsProcessingException,
                        QgsProcessingAlgorithm,
+                       QgsProcessingParameterExtent,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterRasterLayer,
@@ -76,6 +77,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
     SLOPE = 'SLOPE'
     SLOPE_CUTOFF = 'SLOPE_CUTOFF'
     POINT_SPACING = 'POINT_SPACING'
+    EXTENT = 'EXTENT'
     OUTPUT_DIR = 'OUTPUT_DIR'
     CONCAVE_THRESHOLD = 'CONCAVE_THRESHOLD'
 
@@ -163,10 +165,10 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
                 self.POINT_SPACING,
                 self.tr('Point Spacing'),
                 QgsProcessingParameterNumber.Double,
-                0.01,
+                0.001,
                 False,
                 0.0001,
-                1
+                0.001
             )
         )
 
@@ -186,11 +188,20 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFolderDestination(
                 self.OUTPUT_DIR,
                 self.tr('Output Directory'),
-                '/Users/jordan/Google Drive/Desktop/Basins/'
+                '/Users/jordan/Google_Drive/Desktop/Basins/'
+            )
+        )
+        
+        self.addParameter(
+            QgsProcessingParameterExtent(
+                self.EXTENT,
+                self.tr('Extent'),
+                None,
+                False
             )
         )
 
-    def processSlopeHighpassAlgorithm(self, INPUT_CUTOFF, INPUT_SLOPE, OUTPUT_FILE, feedback):
+    def processSlopeHighpassAlgorithm(self, INPUT_CUTOFF, INPUT_SLOPE, INPUT_EXTENT, OUTPUT_FILE, feedback):
         if (os.path.isfile(OUTPUT_FILE)):
             return 0
 
@@ -207,7 +218,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             'slope@1 >= {}'.format(INPUT_CUTOFF),
             OUTPUT_FILE,
             'GTiff',
-            ras.raster.extent(),
+            INPUT_EXTENT,
             ras.raster.width(),
             ras.raster.height(),
             entries
@@ -232,7 +243,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         #     feedback=feedback
         # )
 
-    def processSampleRasterAlgorithm(self, pointSpacing, SAMPLE_FILE, OUTPUT_FILE, feedback):
+    def processSampleRasterAlgorithm(self, pointSpacing, INPUT_EXTENT, SAMPLE_FILE, OUTPUT_FILE, feedback):
         if (os.path.isfile(OUTPUT_FILE)):
             return 0
 
@@ -243,9 +254,9 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
 
         #pointLayerPath = quote(INPUT_POINTS)
         #pointLayer = QgsVectorLayer(pointLayerPath, 'points', 'ogr')
-        QgsMessageLog.logMessage('Now generate points: extent={} crs={}'.format(sampleLayer.extent().toString(), sampleLayer.crs().description()))
+        QgsMessageLog.logMessage('Now generate points: extent={} crs={}'.format(INPUT_EXTENT.toString(), sampleLayer.crs().description()))
         pointLayer = processing.run('qgis:regularpoints', {
-            'EXTENT': sampleLayer.extent(),
+            'EXTENT': INPUT_EXTENT,
             'SPACING': pointSpacing,
             'INSET': 0,
             'IS_SPACING': True,
@@ -309,7 +320,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         """
         Here is where the processing itself takes place.
         """
-
+            
         OUTPUT_DIR = self.parameterAsString(
             parameters,
             self.OUTPUT_DIR,
@@ -329,8 +340,19 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             self.SLOPE_CUTOFF,
             context
         )
+        
+                
+        INPUT_EXTENT = self.parameterAsExtent(
+            parameters,
+            self.EXTENT,
+            context
+        )
+        
+        if INPUT_EXTENT is None:
+            INPUT_EXTENT = slopeLayer.extent()
+        
         slopeProcessedFile = OUTPUT_DIR + 'slope_cutoff_at_{}.tif'.format(slopeCutoff)
-        SLOPE_HIGHPASS_RESULT = self.processSlopeHighpassAlgorithm(slopeCutoff, slopeLayer, slopeProcessedFile, feedback)
+        SLOPE_HIGHPASS_RESULT = self.processSlopeHighpassAlgorithm(slopeCutoff, slopeLayer, INPUT_EXTENT, slopeProcessedFile, feedback)
 
         if SLOPE_HIGHPASS_RESULT > 0:
             return {'SLOPE_FAIL': SLOPE_HIGHPASS_RESULT}
@@ -341,8 +363,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         ##
         pointSpacing = self.parameterAsDouble(parameters, self.POINT_SPACING, context)
         pointProcessedFile = OUTPUT_DIR + 'points_spacing_{}.shp'.format(pointSpacing)
-        extent = slopeLayer.extent()
-        # POINTS_RESULT = self.processRegularPointsAlgorithm(pointSpacing, extent, pointProcessedFile, feedback)
+        # POINTS_RESULT = self.processRegularPointsAlgorithm(pointSpacing, INPUT_EXTENT, pointProcessedFile, feedback)
 
         # if POINTS_RESULT > 0:
         #     return {'POINTS_FAIL': POINTS_RESULT}
@@ -352,7 +373,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         ##
         sampleProcessedFile = OUTPUT_DIR + 'sampled_points_spacing_{}_cutoff_{}.shp'.format(pointSpacing, slopeCutoff)
         QgsMessageLog.logMessage("SAMPLE FILE LOCATION: {}".format(sampleProcessedFile))
-        SAMPLE_RESULT = self.processSampleRasterAlgorithm(pointSpacing, slopeProcessedFile, sampleProcessedFile, feedback)
+        SAMPLE_RESULT = self.processSampleRasterAlgorithm(pointSpacing, INPUT_EXTENT, slopeProcessedFile, sampleProcessedFile, feedback)
 
         if SAMPLE_RESULT > 0:
             return {'SAMPLE_FAIL': SAMPLE_RESULT}
