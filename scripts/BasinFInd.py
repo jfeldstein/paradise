@@ -191,7 +191,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
                 '/Users/jordan/Google_Drive/Desktop/Basins/'
             )
         )
-        
+
         self.addParameter(
             QgsProcessingParameterExtent(
                 self.EXTENT,
@@ -249,7 +249,7 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
 
         fields = QgsFields()
         fields.append(QgsField("slope", QVariant.Double))
-        
+
         sampleLayer = QgsRasterLayer(SAMPLE_FILE, 'Reclassified Slope', 'gdal')
 
         #pointLayerPath = quote(INPUT_POINTS)
@@ -271,14 +271,14 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         #QgsMessageLog.logMessage("Now build sample points destination")
         sampledPointsLayerPath = OUTPUT_FILE
         sampledPointsLayer = QgsVectorFileWriter(
-            sampledPointsLayerPath.replace(' ', "\ "),
+            sampledPointsLayerPath,
             "utf-8",
             fields,
             QgsWkbTypes.Point,
             sampleLayer.crs(),
             "ESRI Shapefile"
         )
-        
+
         result = sampledPointsLayer.hasError()
         QgsMessageLog.logMessage("INITIAL ERROR CHECK, CODE: {}, MSG: {}".format(result, sampledPointsLayer.errorMessage()))
         if result > 0:
@@ -315,12 +315,49 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         del sampledPointsLayer
         return result
 
+    def processZonalStatsAlgorithm(self, INPUT_PREFIX, INPUT_ZONES, INPUT_RASTER):
+      QgsMessageLog.logMessage("processZonalStatsAlgorithm({}, {}, {})".format(INPUT_PREFIX, INPUT_ZONES, INPUT_RASTER))
+      return self.processing.run("qgis:zonalstatistics", {
+        'INPUT_RASTER': INPUT_RASTER,
+        'INPUT_VECTOR': INPUT_ZONES,
+        'COLUMN_PREFIX': INPUT_PREFIX,
+        })
+
+    def processSlopedConcaveHullsAlgorithm(self, INPUT_THRESH, INPUT_POINTS, INPUT_SLOPE, OUTPUT_FILE):
+      hullsResult = self.processConcaveHullAlgorithm(INPUT_THRESH, INPUT_POINTS, OUTPUT_FILE)
+      return self.processZonalStatsAlgorithm('CONCAVE_', OUTPUT_FILE, INPUT_SLOPE)
+
+    def processSlopedConvexHullsAlgorithm(self, INPUT_POINTS, INPUT_SLOPE, OUTPUT_FILE):
+      hullsResult = self.processConvexHullAlgorithm(INPUT_POINTS, OUTPUT_FILE)
+      return self.processZonalStatsAlgorithm('CONVEX_', OUTPUT_FILE, INPUT_SLOPE)
+
+    def processConcaveHullAlgorithm(self, INPUT_THRESH, INPUT_POINTS, OUTPUT_FILE):
+        QgsMessageLog.logMessage("processConcaveHullAlgorithm({}, {}, {})".format(INPUT_THRESH, INPUT_POINTS, OUTPUT_FILE))
+        sampledPointsLayer = QgsVectorLayer(
+            sampledPointsLayerPath,
+            'ogr'
+        )
+        return processing.run("qgis:concavehull", {
+            'INPUT': sampledPointsLayer,
+            'ALPHA': INPUT_THRESH,
+            'HOLES': True,
+            'NO_MULTIGEOMETRY': False,
+            'OUTPUT': OUTPUT_FILE
+        })
+
+    def processConvexHullAlgorithm(self, INPUT_POINTS, OUTPUT_FILE):
+        QgsMessageLog.logMessage("processConvexHullAlgorithm({}, {})".format(INPUT_POINTS, OUTPUT_FILE))
+        return processing.run("qgis:convexehull", {
+            'INPUT': INPUT_POINTS,
+            'OUTPUT': OUTPUT_FILE
+        })
+
 
     def processAlgorithm(self, parameters, context, feedback):
         """
         Here is where the processing itself takes place.
         """
-            
+
         OUTPUT_DIR = self.parameterAsString(
             parameters,
             self.OUTPUT_DIR,
@@ -340,17 +377,17 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             self.SLOPE_CUTOFF,
             context
         )
-        
-                
+
+
         INPUT_EXTENT = self.parameterAsExtent(
             parameters,
             self.EXTENT,
             context
         )
-        
+
         if INPUT_EXTENT is None:
             INPUT_EXTENT = slopeLayer.extent()
-        
+
         slopeProcessedFile = OUTPUT_DIR + 'slope_cutoff_at_{}.tif'.format(slopeCutoff)
         SLOPE_HIGHPASS_RESULT = self.processSlopeHighpassAlgorithm(slopeCutoff, slopeLayer, INPUT_EXTENT, slopeProcessedFile, feedback)
 
@@ -377,6 +414,42 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
 
         if SAMPLE_RESULT > 0:
             return {'SAMPLE_FAIL': SAMPLE_RESULT}
+
+        ##
+        #   Generate Concave Hulls
+        ##
+        concaveThresh = self.parameterAsDouble(
+            parameters,
+            self.CONCAVE_THRESHOLD,
+            context
+        )
+        concaveProcessedFile = OUTPUT_DIR + "concave_threshold_{}_spacing_{}_cutoff_{}.shp".format(
+          concaveThresh,
+          pointSpacing,
+          slopeCutoff
+        )
+        concaveResult = self.processSlopedConcaveHullsAlgorithm(
+            concaveThresh,
+            sampleProcessedFile,
+            slopeLayer,
+            concaveProcessedFile
+        )
+
+        ##
+        # And Generate Convex Hulls
+        ##
+        convexProcessedFile = OUTPUT_DIR + "convex_spacing_{}_cutoff_{}.shp".format(
+          pointSpacing,
+          slopeCutoff
+        )
+        convexResult = self.processSlopedConvexHullsAlgorithm(
+          sampleProcessedFile,
+          slopeLayer,
+          convexProcessedFile
+        )
+
+
+
 
 
         # Return the results of the algorithm. In this case our only result is
